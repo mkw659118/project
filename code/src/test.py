@@ -101,7 +101,7 @@ for stockcode in stockcodes:
 
     input_tensor = torch.as_tensor(x_scaler.transform(raw_input), dtype=torch.float32).to(device).unsqueeze(0)
     with torch.no_grad():
-        pred = model(input_tensor, None, None, None).cpu().numpy().squeeze(0)
+        pred = model(input_tensor).cpu().numpy().squeeze(0)
         pred = y_scaler.inverse_transform(pred)
 
     true_close = raw_input.iloc[-1]["Close"]

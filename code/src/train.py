@@ -9,6 +9,7 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import pickle
 import numpy as np
 from DLinear import Model as DLinearModel
+from transformer import Transformer
 
 
 # ========== EarlyStopping 类 ==========
@@ -136,11 +137,22 @@ def train_model(train_data, val_data, win_size, enc_in, num_epochs=100):
     train_loader = DataLoader(TensorDataset(X_train, Y_train), batch_size=32, shuffle=True)
     val_loader = DataLoader(TensorDataset(X_val, Y_val), batch_size=32, shuffle=False)
 
-    configs = Namespace(task_name='long_term_forecast', seq_len=win_size, pred_len=1, enc_in=enc_in, moving_avg=25)
-    model = DLinearModel(configs).to(device)
+    # config = Namespace(task_name='long_term_forecast', seq_len=win_size, pred_len=1, enc_in=enc_in, moving_avg=25)
+    # model = DLinearModel(configs).to(device)
+    config = Namespace(seq_len=win_size, num_layers=2, n_heads=4, pred_len=1, enc_in=enc_in, revin=True, d_model=64)
+    model = Transformer(
+        input_size=config.enc_in,
+        d_model=config.d_model,
+        revin=config.revin,
+        num_heads=config.n_heads,
+        num_layers=config.num_layers,
+        seq_len=config.seq_len,
+        pred_len=config.pred_len,
+    ).to(device)
+
     criterion = nn.MSELoss()
     optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
-    monitor = EarlyStopping(patience=10)
+    monitor = EarlyStopping(patience=15)
 
     print("\n🚀 Start training DLinear model with validation support")
     for epoch in range(num_epochs):
@@ -151,7 +163,7 @@ def train_model(train_data, val_data, win_size, enc_in, num_epochs=100):
         pbar = tqdm(train_loader, desc=f"Epoch [{epoch + 1}/{num_epochs}]", unit="batch")
         for batch_X, batch_y in pbar:
             optimizer.zero_grad()
-            output = model(batch_X, None, None, None)
+            output = model(batch_X)
             loss = criterion(output, batch_y)
             loss.backward()
             optimizer.step()
@@ -161,7 +173,7 @@ def train_model(train_data, val_data, win_size, enc_in, num_epochs=100):
         model.eval()
         val_loss = 0.0
         for val_X, val_y in val_loader:
-            val_output = model(val_X, None, None, None)
+            val_output = model(val_X)
             loss = criterion(val_output, val_y)
             val_loss += loss.item()
         avg_val_loss = val_loss / len(val_loader)

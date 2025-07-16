@@ -65,7 +65,7 @@ class Model(nn.Module):
         # Encoder
         return self.encoder(x_enc)
 
-    def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
+    def forward(self, x_enc):
         if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
             dec_out = self.forecast(x_enc)
             return dec_out[:, -self.pred_len:, :]  # [B, L, D]
