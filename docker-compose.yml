@@ -1,0 +1,13 @@
+services:
+  app:
+    image: bdc2025:latest
+    volumes:
+      - ./run.sh:/app/run.sh
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./temp:/app/temp
+    working_dir: /app
+    command: /bin/bash /app/run.sh
+    # command: tail -f /dev/null
+    tty: false # 确保容器在命令结束后退出
+    stdin_open: false # 不保持容器的标准输入打开

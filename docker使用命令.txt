@@ -1,0 +1,6 @@
+docker创建
+docker build -t bdc2025 .
+docker打包
+docker save -o 队伍名称.tar bdc2025:latest
+docker加载
+docker load -i 队伍名称.tar
