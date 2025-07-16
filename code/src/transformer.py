@@ -10,7 +10,7 @@ import torch.nn as nn
 class Attention(torch.nn.Module):
     def __init__(self, d_model, num_heads, dropout=0.10):
         super().__init__()
-        self.att = torch.nn.MultiheadAttention(d_model, num_heads, dropout)
+        self.att = torch.nn.MultiheadAttention(d_model, num_heads, dropout, batch_first=True)
 
     def forward(self, x, weight=False):
         out, weights = self.att(x, x, x)
@@ -231,7 +231,7 @@ class Transformer(torch.nn.Module):
             x = ff(norm2(x)) + x
         x = self.norm(x)
         y = self.projection(x)
-        
+
         if self.revin:
             y = y * stdev[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1)
             y = y + means[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1)
