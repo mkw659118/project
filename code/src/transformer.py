@@ -12,12 +12,14 @@ class Attention(torch.nn.Module):
         super().__init__()
         self.att = torch.nn.MultiheadAttention(d_model, num_heads, dropout, batch_first=True)
 
-    def forward(self, x, weight=False):
-        out, weights = self.att(x, x, x)
+    def forward(self, x, attention_mask=None, weight=False):
+        # x shape: [B, L, D]
+        out, weights = self.att(x, x, x, attn_mask=attention_mask)
         if weight:
             return out, weights
         else:
             return out
+
         
 class FeedForward(nn.Module):
     def __init__(self, d_model, d_ff, dropout=0.):
@@ -215,26 +217,29 @@ class Transformer(torch.nn.Module):
         self.norm = get_norm(d_model, norm_method)
         self.projection = torch.nn.Linear(d_model, input_size)
 
-    def forward(self, x, x_mark=None):
+    def forward(self, x, x_mark=None, attention_mask=None):
         if self.revin:
             means = x.mean(1, keepdim=True).detach()
             x = x - means
             stdev = torch.sqrt(torch.var(x, dim=1, keepdim=True, unbiased=False) + 1e-5)
             x /= stdev
 
-        x = self.enc_embedding(x, x_mark)  # 调整形状为 [B, L, d_model]
+        x = self.enc_embedding(x, x_mark)  # [B, L, D]
+        
+        # 插入预测长度部分（预测的位置也是需要 mask 的）
         x = rearrange(x, 'bs seq_len d_model -> bs d_model seq_len')
-        x = self.predict_linear(x)
-        x = rearrange(x, 'bs d_model seq_pred_len -> bs seq_pred_len d_model')
+        x = self.predict_linear(x)  # [B, D, L + pred_len]
+        x = rearrange(x, 'bs d_model seq_len -> bs seq_len d_model')  # back to [B, L+P, D]
+
         for norm1, attn, norm2, ff in self.layers:
-            x = attn(norm1(x)) + x
+            x = attn(norm1(x), attention_mask=attention_mask) + x
             x = ff(norm2(x)) + x
+
         x = self.norm(x)
         y = self.projection(x)
 
         if self.revin:
             y = y * stdev[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1)
             y = y + means[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1)
+
         return y[:, -self.pred_len:, :]
-
-

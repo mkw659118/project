@@ -99,6 +99,12 @@ for stockcode in stockcodes:
     val_data += process_data(val_part, stp=32, pred_len=1)
 
 
+def generate_causal_mask(seq_len, pred_len, device):
+    total_len = seq_len + pred_len
+    mask = torch.triu(torch.ones(total_len, total_len), diagonal=1).bool()
+    return mask.to(device)
+
+
 # ========== 模型训练函数 ==========
 def train_model(train_data, val_data, win_size, enc_in, num_epochs=100):
     if len(train_data) == 0 or len(val_data) == 0:
@@ -163,17 +169,21 @@ def train_model(train_data, val_data, win_size, enc_in, num_epochs=100):
         pbar = tqdm(train_loader, desc=f"Epoch [{epoch + 1}/{num_epochs}]", unit="batch")
         for batch_X, batch_y in pbar:
             optimizer.zero_grad()
-            output = model(batch_X)
+            mask = generate_causal_mask(seq_len=win_size, pred_len=1, device=batch_X.device)
+            output = model(batch_X, attention_mask=mask)
+
             loss = criterion(output, batch_y)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
             pbar.set_postfix(train_loss=loss.item())
         avg_train_loss = total_loss / len(train_loader)
+        
         model.eval()
         val_loss = 0.0
         for val_X, val_y in val_loader:
-            val_output = model(val_X)
+            mask = generate_causal_mask(seq_len=win_size, pred_len=1, device=val_X.device)
+            val_output = model(val_X, attention_mask=mask)
             loss = criterion(val_output, val_y)
             val_loss += loss.item()
         avg_val_loss = val_loss / len(val_loader)

@@ -2,21 +2,28 @@ import pandas as pd
 import torch
 import os
 import pickle
+import numpy as np
 
 # ========== 参数配置 ==========
 seq_len = 32
 pred_len = 1
-
 target_column = "Close"
 model_path = f"./model/model_{target_column}_1.bin"
-
 output_top10 = "./output/result1.csv"
 output_all_preds = "./output/all_predictions1.csv"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-# ========== 数据加载与预处理 ==========
+
+# ========== Causal Mask 生成函数 ==========
+def generate_causal_mask(seq_len, pred_len, device):
+    total_len = seq_len + pred_len
+    mask = torch.triu(torch.ones(total_len, total_len), diagonal=1).bool()
+    return mask.to(device)
+
+
+# ========== 数据加载函数 ==========
 def inputdata(path):
     return pd.read_csv(path, header=0, sep=",", encoding="utf-8")
 
@@ -56,7 +63,6 @@ def processing_feature_test():
         "涨跌幅": "PriceChangePercentage",
     }
     data = transcolname(data, column_mapping)
-
     if "PriceChangePercentage" in data.columns:
         data.drop(columns=["PriceChangePercentage"], inplace=True)
     data = trans_datetime(data)
@@ -65,18 +71,25 @@ def processing_feature_test():
 
 # ========== 加载数据 ==========
 data_raw = processing_feature_test()
-
 column_names = data_raw.columns.tolist()
 colname2index = {x: i for i, x in enumerate(column_names)}
 stockcodes = data_raw["StockCode"].drop_duplicates().tolist()
-target_index = colname2index["Close"]
-print(colname2index["Close"])
-max_date = data_raw["Date"].max()
+target_index = colname2index[target_column]
 
 # ========== 加载模型 ==========
 assert os.path.exists(model_path), f"模型文件不存在: {model_path}"
 model = pickle.load(open(model_path, "rb")).to(device)
 model.eval()
+
+# ========== 加载归一化器 ==========
+try:
+    with open('./x_scaler1.pkl', 'rb') as f:
+        x_scaler = pickle.load(f)
+    with open('./y_scaler1.pkl', 'rb') as f:
+        y_scaler = pickle.load(f)
+except Exception as e:
+    print(" 加载归一化器失败:", e)
+    exit()
 
 # ========== 预测 + 排序 + 保存 ==========
 all_preds = []
@@ -87,31 +100,18 @@ for stockcode in stockcodes:
     if len(raw_data) < seq_len:
         continue
 
-    raw_input = raw_data.iloc[-seq_len:]
+    raw_input = raw_data.iloc[-seq_len:].values
+    input_tensor = torch.tensor(x_scaler.transform(raw_input), dtype=torch.float32).unsqueeze(0).to(device)
+    attention_mask = generate_causal_mask(seq_len=seq_len, pred_len=pred_len, device=device)
 
-    try:
-        with open('./x_scaler1.pkl', 'rb') as f:
-            x_scaler = pickle.load(f)
-
-        with open('./y_scaler1.pkl', 'rb') as f:
-            y_scaler = pickle.load(f)
-
-    except Exception as e:
-        print(e)
-
-    input_tensor = torch.as_tensor(x_scaler.transform(raw_input), dtype=torch.float32).to(device).unsqueeze(0)
     with torch.no_grad():
-        pred = model(input_tensor).cpu().numpy().squeeze(0)
-        pred = y_scaler.inverse_transform(pred)
+        pred = model(input_tensor, attention_mask=attention_mask)
+        pred = pred.cpu().numpy()
+        pred = y_scaler.inverse_transform(pred.squeeze(0))  # shape: [pred_len, D]
 
-    true_close = raw_input.iloc[-1]["Close"]
-    date = raw_input.iloc[-1]["Date"]
-
-    # pred 是 (1, feature_dim) 或 (feature_dim,) 形状的数组
-    # 提取 Close 这一列对应的预测值
-    pred_value = pred[0] if pred.ndim == 1 else pred[0, target_index]
-
-    # 然后计算涨跌幅
+    true_close = raw_input[-1][target_index]
+    date = raw_data.iloc[-1]["Date"]
+    pred_value = pred[-1, target_index]
     change_rate = (pred_value - true_close) / true_close * 100
 
     record = {
@@ -121,7 +121,6 @@ for stockcode in stockcodes:
         "Pred_Close": pred_value,
         "Change_%": change_rate
     }
-
     all_records.append(record)
     all_preds.append((stockcode, change_rate))
 
@@ -129,8 +128,7 @@ for stockcode in stockcodes:
 all_preds = sorted(all_preds, key=lambda x: x[1], reverse=True)
 pred_top_10_max_target = [x[0] for x in all_preds[:10]]
 pred_top_10_min_target = [x[0] for x in all_preds[-10:]]
-print(all_preds[:10])
-print(all_preds[-10:])
+
 os.makedirs(os.path.dirname(output_top10), exist_ok=True)
 result_df = pd.DataFrame({
     "涨幅最大股票代码": pred_top_10_max_target,
